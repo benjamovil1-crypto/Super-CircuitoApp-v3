@@ -1,0 +1,16 @@
+{
+  "name": "super-circuito-app",
+  "version": "3.0.0",
+  "description": "Super CircuitoApp Vista Edition",
+  "scripts": {
+    "build": "echo done"
+  },
+  "dependencies": {
+    "@capacitor/android": "6.2.0",
+    "@capacitor/core": "6.2.0",
+    "@capacitor/local-notifications": "6.1.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.2.0"
+  }
+}

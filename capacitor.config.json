@@ -1,0 +1,20 @@
+{
+  "appId": "com.supercircuito.app",
+  "appName": "Super CircuitoApp",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#000000"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_launcher_foreground",
+      "iconColor": "#1E5FA8"
+    },
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#000000",
+      "showSpinner": false
+    }
+  }
+}
