@@ -1,0 +1,157 @@
+name: Build APK - Super CircuitoApp
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: npm install
+        run: npm install
+
+      - name: Crear carpeta www y verificar
+        run: |
+          mkdir -p www
+          cp index.html www/index.html
+          SIZE=$(wc -c < www/index.html)
+          echo "✅ www/index.html — $SIZE bytes"
+          if [ "$SIZE" -lt 50000 ]; then
+            echo "❌ index.html demasiado pequeño. Verifica que subiste el archivo correcto."
+            exit 1
+          fi
+          head -2 www/index.html
+
+      - name: Agregar Android
+        run: npx cap add android
+
+      - name: Sincronizar Capacitor
+        run: npx cap sync android
+
+      # ── ICONO: copiar a todas las carpetas mipmap ──────────────────
+      - name: Instalar icono personalizado
+        run: |
+          echo "Archivos en icons/:"
+          ls -la icons/ 2>/dev/null || echo "AVISO: Carpeta icons/ no encontrada"
+          for D in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p android/app/src/main/res/mipmap-${D}
+          done
+          for D in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            SRC="icons/ic_launcher_${D}.png"
+            DST="android/app/src/main/res/mipmap-${D}"
+            if [ -f "$SRC" ]; then
+              cp "$SRC" "${DST}/ic_launcher.png"
+              cp "$SRC" "${DST}/ic_launcher_round.png"
+              echo "OK $D"
+            else
+              echo "No encontrado: $SRC — buscando fallback..."
+              FALLBACK=$(ls icons/*.png 2>/dev/null | head -1)
+              if [ -n "$FALLBACK" ]; then
+                cp "$FALLBACK" "${DST}/ic_launcher.png"
+                cp "$FALLBACK" "${DST}/ic_launcher_round.png"
+                echo "  Usando $FALLBACK"
+              fi
+            fi
+          done
+          echo "Iconos procesados"
+
+      # ── ICONO foreground para adaptive icon ──────────────────────
+      - name: Icono foreground adaptive
+        run: |
+          for D in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp icons/ic_launcher_foreground.png android/app/src/main/res/mipmap-${D}/ic_launcher_foreground.png 2>/dev/null || true
+          done
+
+      # ── Notification small icon (blanco, 24dp) ──────────────────
+      - name: Crear notification icon
+        run: |
+          mkdir -p android/app/src/main/res/drawable
+          cat > android/app/src/main/res/drawable/ic_stat_notify.xml << 'XMLEOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+            <path android:fillColor="#FFFFFF"
+              android:pathData="M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22A10,10 0 0,1 2,12A10,10 0 0,1 12,2M11,7V13L15.5,15.5L16.5,13.8L13,12V7H11Z"/>
+          </vector>
+          XMLEOF
+          echo "✅ Notification icon creado"
+
+      # ── AndroidManifest: permisos ─────────────────────────────────
+      - name: Permisos AndroidManifest
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          # POST_NOTIFICATIONS, VIBRATE, SCHEDULE_EXACT_ALARM, PRINT
+          sed -i 's|<uses-permission android:name="android.permission.INTERNET"/>|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>|' "$MANIFEST"
+          echo "✅ Permisos agregados"
+
+      # ── build.gradle: compileSdk 35 ───────────────────────────────
+      - name: Actualizar compileSdk
+        run: |
+          GRADLE="android/app/build.gradle"
+          sed -i 's/compileSdk .*/compileSdk 35/' "$GRADLE"
+          sed -i 's/targetSdk .*/targetSdk 35/' "$GRADLE"
+          echo "✅ SDK actualizado"
+
+      # ── Registrar plugins en MainActivity.java ──────────────────────
+      # Sin este paso, LocalNotifications y Filesystem no funcionan en APK
+      - name: Registrar plugins en MainActivity
+        run: |
+          MAIN="android/app/src/main/java/com/supercircuito/app/MainActivity.java"
+          # Agregar imports después de "import com.getcapacitor.BridgeActivity;"
+          sed -i 's/import com.getcapacitor.BridgeActivity;/import com.getcapacitor.BridgeActivity;\nimport com.capacitorjs.plugins.localnotifications.LocalNotificationsPlugin;\nimport com.capacitorjs.plugins.filesystem.FilesystemPlugin;/' "$MAIN"
+          # Registrar en onCreate: añadir registerPlugin() antes del super.onCreate
+          sed -i 's/super.onCreate(savedInstanceState);/registerPlugin(LocalNotificationsPlugin.class);\n    registerPlugin(FilesystemPlugin.class);\n    super.onCreate(savedInstanceState);/' "$MAIN"
+          echo "✅ Plugins registrados en MainActivity"
+          cat "$MAIN"
+
+      - name: Permisos Gradle
+        run: chmod +x android/gradlew
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Build APK debug
+        run: |
+          cd android
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=512m"
+
+      - name: Verificar APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          ls -lh "$APK" && echo "✅ APK OK" || (find android/app/build -name "*.apk" 2>/dev/null; exit 1)
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SuperCircuitoApp-v4
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+          if-no-files-found: error
